@@ -3,6 +3,19 @@
 #[ink::contract]
 mod mapper { // Mapping + Voter
     use ink::storage::Mapping;//, env::call::ConstructorReturnType};
+    use scale::{Decode, Encode};
+
+    /// Error management.
+    #[derive(PartialEq, Debug, Eq, Clone, Encode, Decode)]
+    #[cfg_attr(feature = "std", derive(scale_info::TypeInfo))]
+    pub enum Error {
+        NotIsAdmin,
+        MustBeItSelf,
+        VoterAlreadyExists,
+        VoterNotExist,
+        NotVoteItself,
+        NotIsVoter,
+    }
 
     #[ink(event)]
     pub struct NewVoter {
@@ -53,35 +66,55 @@ mod mapper { // Mapping + Voter
         }
 
         #[ink(message)]
-        pub fn add_voter(&mut self, voter_id: AccountId) {
-            assert!(self.env().caller() == self.admin.address);
-            assert!(!self.enabled_voters.contains(voter_id));
+        pub fn add_voter(&mut self, voter_id: AccountId) -> Result<(), Error> {
+            if self.env().caller() != self.admin.address {
+                return Err(Error::NotIsAdmin);
+            }
+            if self.enabled_voters.contains(voter_id) {
+                return Err(Error::VoterAlreadyExists);
+            }
                         
             self.enabled_voters.insert(voter_id, &());
             self.env().emit_event(NewVoter { voter_id });
+            Ok(())
         }        
 
         #[ink(message)]
-        pub fn remove_voter(&mut self, voter_id: AccountId) {
-            assert!(self.env().caller() == self.admin.address);
-            assert!(self.enabled_voters.contains(voter_id));
+        pub fn remove_voter(&mut self, voter_id: AccountId) -> Result<(), Error> {
+            if self.env().caller() != self.admin.address {
+                return Err(Error::NotIsAdmin);
+            }
+            if !self.enabled_voters.contains(voter_id) {
+                return Err(Error::VoterNotExist);
+            }
                         
             self.enabled_voters.remove(voter_id);
             self.env().emit_event(RemoveVoter { voter_id });
+            Ok(())
         }
 
         #[ink(message)]
-        pub fn get_reputation(&mut self, voter_id: AccountId) -> u32 {
-            assert!(self.env().caller() == voter_id);
-            assert!(self.enabled_voters.contains(voter_id));
-                        
-            self.votes.get(voter_id).unwrap_or(0)                      
+        pub fn get_reputation(&mut self, voter_id: AccountId) -> Result<u32, Error> {
+            if self.env().caller() != voter_id {
+                return Err(Error::MustBeItSelf);
+            }
+            if !self.enabled_voters.contains(voter_id) {
+                return Err(Error::VoterNotExist);
+            }                        
+            Ok(self.votes.get(voter_id).unwrap_or(0))
         }    
 
         #[ink(message)]
-        pub fn vote(&mut self, voter_id: AccountId) {
-            assert!(self.enabled_voters.contains(voter_id));
-            assert!(self.env().caller() != voter_id);
+        pub fn vote(&mut self, voter_id: AccountId) -> Result<(), Error> {
+            if !self.enabled_voters.contains(self.env().caller()) {
+                return Err(Error::NotIsVoter);
+            }
+            if !self.enabled_voters.contains(voter_id) {
+                return Err(Error::VoterNotExist);
+            }
+            if self.env().caller() == voter_id {
+                return Err(Error::NotVoteItself);
+            }
 
             let caller = self.env().caller();
             let caller_votes =self.votes.get(caller).unwrap_or(0);
@@ -92,6 +125,7 @@ mod mapper { // Mapping + Voter
 
             self.total_votes += power;
             self.env().emit_event(Vote { voter_id });
+            Ok(())
         }
 
         fn power_of_vote(&mut self, votes: u32) -> u32 {
